@@ -23,6 +23,15 @@
 # Related third party imports
 
 import numpy as np
+import os
+import time
+
+import torch
+from debayer import Debayer3x3
+f = Debayer3x3().cuda()
+# import cv2
+from PIL import Image 
+import pickle
 
 from vispy import gloo
 from vispy import app
@@ -78,6 +87,13 @@ class CanvasBase(app.Canvas):
         # draw images on the canvas:
         self._pause_drawing = False
 
+        # 
+        self._debayer = False
+
+        #
+        self._save_next = False
+        self._output_folder = './'
+
         #
         self._origin = [0, 0]
 
@@ -91,7 +107,7 @@ class CanvasBase(app.Canvas):
         self._buffers = []
 
     @property
-    def display_rate(self):
+    def display_rate(self): 
         return self._display_rate
 
     @display_rate.setter
@@ -175,6 +191,9 @@ class CanvasBase(app.Canvas):
                 _buffer.queue()
         self._buffers.clear()
 
+    def save(self):
+        self._save_next = True
+
     def _draw(self):
         raise NotImplementedError
 
@@ -208,6 +227,11 @@ class CanvasBase(app.Canvas):
 
     def resume_drawing(self):
         self._pause_drawing = False
+
+    def toggle_debayering(self):
+        # TODO: Assert that debayering is possible.
+        # I.e. data_format in bayer_location_formats
+        self._debayer = not self._debayer
 
     @property
     def background_color(self):
@@ -385,9 +409,61 @@ class Canvas2D(CanvasBase):
                             content = content[:, :, ::-1]
                     else:
                         return
+                
+                # https://github.com/cheind/pytorch-debayer
+                if self._debayer:
+                    # Perform debayering. 
+                    # Only compatible with RGGB formats for now.
+
+                    # Use OpenCV to verify that Torch demosaicing is valid.
+                    # content_cv = cv2.cvtColor(content, cv2.COLOR_BAYER_BG2RGB).astype(np.float32)
+                    # content_cv /= content_cv.max() 
+                    # content_cv *= 255.0
+                    # content = content_cv.astype(np.uint8)
+
+                    if self._save_next:
+                        raw = content.copy()
+
+                    content_torch = (
+                        torch.from_numpy(content.astype(np.int32))
+                        .to(torch.float32)
+                        .to("cuda")
+                    )[None, None, :]
+
+                    with torch.no_grad():
+                        rgb = f(content_torch)
+
+                    rgb = rgb[0].permute(1,2,0).cpu().numpy()
+                    rgb /= rgb.max()
+                    rgb *= 255
+                    content = rgb.astype(np.uint8)
+
+
+                if self._save_next and self._debayer:
+                    # Save raw and debayered image
+                    current_time = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+                    name_fmt = "{}.{}"
+                    
+                    pickle.dump(raw, open(
+                        os.path.join(self._output_folder, name_fmt.format(current_time, 'pkl')), 'wb')
+                    )
+                    debayered_img = Image.fromarray(content)
+                    debayered_img.save(
+                        os.path.join(self._output_folder, name_fmt.format(current_time, 'png'))
+                    )
+                    self._save_next = False
+                elif self._save_next:
+                    # save only raw
+                    current_time = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+                    name_fmt = "{}.{}"
+                    pickle.dump(content, open(
+                        os.path.join(self._output_folder, name_fmt.format(current_time, 'pkl')), 'wb')
+                    )
+                    
+                    self._save_next = False
 
                 # Convert each data to an 8bit.
-                if exponent > 0:
+                if exponent > 0 and not self._debayer:
                     # The following code may affect to the rendering
                     # performance:
                     content = (content / (2 ** exponent))

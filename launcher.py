@@ -18,7 +18,11 @@
 # ----------------------------------------------------------------------------
 
 
+
 import sys
+# Look in the src folder first. Prevents loading of harvesters_gui from pip.
+sys.path = ['src/'] + sys.path
+
 from PyQt5.QtWidgets import QApplication
 from harvesters_gui.frontend.pyqt5 import Harvester
 
@@ -26,5 +30,6 @@ from harvesters_gui.frontend.pyqt5 import Harvester
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     h = Harvester()
+    h.add_cti_files('/opt/cvb-13.04.000/drivers/genicam/libGevTL.cti')
     h.show()
     sys.exit(app.exec_())
