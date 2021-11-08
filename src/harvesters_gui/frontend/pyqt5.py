@@ -21,14 +21,15 @@
 # Standard library imports
 import datetime
 import os
+from re import S
 import sys
 import time
 
 # Related third party imports
 from PyQt5.QtCore import QMutexLocker, QMutex, pyqtSignal, QThread
 from PyQt5.QtGui import QKeySequence
-from PyQt5.QtWidgets import QMainWindow, QAction, QComboBox, \
-    QDesktopWidget, QFileDialog, QDialog, QShortcut, QApplication
+from PyQt5.QtWidgets import QHBoxLayout, QMainWindow, QAction, QComboBox, \
+    QDesktopWidget, QFileDialog, QDialog, QPushButton, QShortcut, QApplication, QWidget
 
 from genicam.gentl import NotInitializedException, InvalidHandleException, \
     InvalidIdException, ResourceInUseException, \
@@ -49,6 +50,8 @@ from harvesters_gui._private.frontend.pyqt5.icon import Icon
 from harvesters_gui._private.frontend.pyqt5.thread import _PyQtThread
 from harvesters.util.logging import get_logger
 
+# tmp
+from logging import DEBUG
 
 class Harvester(QMainWindow):
     #
@@ -57,7 +60,7 @@ class Harvester(QMainWindow):
 
     def __init__(self, *, vsync=True, logger=None):
         #
-        self._logger = logger or get_logger(name='harvesters')
+        self._logger = logger or get_logger(name='harvesters', level=DEBUG)
 
         #
         super().__init__()
@@ -71,10 +74,20 @@ class Harvester(QMainWindow):
         )
         self._ia = None  # Image Acquirer
 
+        # 
+        self._central_widget = QWidget(self)
+        self._widget_hlayout = QHBoxLayout(self._central_widget)
+        
+
         #
         self._widget_canvas = Canvas2D(vsync=vsync)
         self._widget_canvas.create_native()
         self._widget_canvas.native.setParent(self)
+        self._widget_canvas.native.setParent(self._central_widget)
+
+        self._widget_hlayout.addWidget(self._widget_canvas.native)
+        self._widget_triangulation_pane = None
+
 
         #
         self._action_stop_image_acquisition = None
@@ -150,6 +163,16 @@ class Harvester(QMainWindow):
     def cti_files(self):
         return self.harvester_core.cti_files
 
+    def add_cti_files(self, path):
+        '''
+            Enables CTI file to be added by default.
+            TODO: Maybe add a settings.json file that is read on start?
+        '''
+        self.harvester_core.add_cti_file(path)
+        self.harvester_core.update_device_info_list()
+        for o in self._observer_widgets:
+            o.update()
+
     @property
     def harvester_core(self):
         return self._harvester_core
@@ -169,8 +192,10 @@ class Harvester(QMainWindow):
         #
         self._initialize_gui_toolbar(self._observer_widgets)
 
+
         #
-        self.setCentralWidget(self.canvas.native)
+        # self.setCentralWidget(self.canvas.native)
+        self.setCentralWidget(self._central_widget)
 
         #
         self.resize(800, 600)
@@ -297,6 +322,53 @@ class Harvester(QMainWindow):
         self._action_stop_image_acquisition = button_stop_image_acquisition
 
         #
+        button_save_image = ActionSaveImage(
+            icon='capture.png', title='Save Image', parent=self,
+            action=self.action_on_save_image,
+            is_enabled=self.is_enabled_on_save_image
+        )
+        shortcut_key = None
+        button_save_image.setToolTip(
+            compose_tooltip('Save image', shortcut_key)
+        )
+        # button_save_image.setShortcut(shortcut_key)
+        button_save_image.toggle()
+        observers.append(button_save_image)
+        self._action_save_image = button_save_image
+
+        #
+        button_debayer = ActionDebayer(
+            icon='debayer.png', title='Debayer image', parent=self,
+            action=self.action_on_debayer,
+            is_enabled=self.is_enabled_on_debayer
+        )
+        shortcut_key = None
+        button_debayer.setToolTip(
+            compose_tooltip('Debayer image', shortcut_key)
+        )
+        # button_debayer.setShortcut(shortcut_key)
+        # button_debayer.toggle()
+        observers.append(button_debayer)
+        self._action_debayer = button_debayer
+
+
+        #
+        button_show_triangulation_pane = ActionDebayer(
+            icon='processing.png', title='Show triangulation window', parent=self,
+            action=self.action_on_show_triangulation_pane,
+            is_enabled=self.is_enabled_on_show_triangulation_pane
+        )
+        shortcut_key = None
+        button_show_triangulation_pane.setToolTip(
+            compose_tooltip('Show triangulation window', shortcut_key)
+        )
+        # button_debayer.setShortcut(shortcut_key)
+        # button_debayer.toggle()
+        observers.append(button_show_triangulation_pane)
+        self._action_show_triangulation_window = button_show_triangulation_pane
+
+
+        #
         button_dev_attribute = ActionShowAttributeController(
             icon='device_attribute.png', title='Device Attribute', parent=self,
             action=self.action_on_show_attribute_controller,
@@ -375,6 +447,7 @@ class Harvester(QMainWindow):
         button_select_file.add_observer(button_start_image_acquisition)
         button_select_file.add_observer(button_toggle_drawing)
         button_select_file.add_observer(button_stop_image_acquisition)
+        button_select_file.add_observer(button_save_image) # I don't think I need this. 
         button_select_file.add_observer(self._widget_device_list)
 
         #
@@ -389,6 +462,7 @@ class Harvester(QMainWindow):
         button_connect.add_observer(button_start_image_acquisition)
         button_connect.add_observer(button_toggle_drawing)
         button_connect.add_observer(button_stop_image_acquisition)
+        button_connect.add_observer(button_save_image)
         button_connect.add_observer(self._widget_device_list)
 
         #
@@ -399,19 +473,25 @@ class Harvester(QMainWindow):
         button_disconnect.add_observer(button_start_image_acquisition)
         button_disconnect.add_observer(button_toggle_drawing)
         button_disconnect.add_observer(button_stop_image_acquisition)
+        button_disconnect.add_observer(button_save_image)
         button_disconnect.add_observer(self._widget_device_list)
 
         #
         button_start_image_acquisition.add_observer(button_toggle_drawing)
         button_start_image_acquisition.add_observer(button_stop_image_acquisition)
+        button_start_image_acquisition.add_observer(button_save_image)
+        button_start_image_acquisition.add_observer(button_debayer)
 
         #
         button_toggle_drawing.add_observer(button_start_image_acquisition)
         button_toggle_drawing.add_observer(button_stop_image_acquisition)
+        button_toggle_drawing.add_observer(button_save_image)
 
         #
         button_stop_image_acquisition.add_observer(button_start_image_acquisition)
         button_stop_image_acquisition.add_observer(button_toggle_drawing)
+        button_stop_image_acquisition.add_observer(button_save_image)
+
 
         # Add buttons to groups:
 
@@ -427,6 +507,9 @@ class Harvester(QMainWindow):
         group_device.addAction(button_start_image_acquisition)
         group_device.addAction(button_toggle_drawing)
         group_device.addAction(button_stop_image_acquisition)
+        group_device.addAction(button_save_image)
+        group_device.addAction(button_debayer)
+        group_device.addAction(button_show_triangulation_pane)
         group_device.addAction(button_dev_attribute)
 
         #
@@ -579,7 +662,7 @@ class Harvester(QMainWindow):
             self.ia.statistics.reset()
             self._thread_statistics_measurement.start()
 
-            self.ia.start_image_acquisition()
+            self.ia.start_acquisition()
 
     def is_enabled_on_start_image_acquisition(self):
         enable = False
@@ -600,7 +683,7 @@ class Harvester(QMainWindow):
         self.canvas.release_buffers()
 
         # Then we stop image acquisition:
-        self.ia.stop_image_acquisition()
+        self.ia.stop_acquisition()
 
         # Initialize the drawing state:
         self.canvas.pause_drawing(False)
@@ -611,7 +694,45 @@ class Harvester(QMainWindow):
             if self.ia:
                 if self.ia.is_acquiring_images():
                     enable = True
+
         return enable
+
+    def action_on_save_image(self):
+        if not os.path.exists('Output'):
+            os.makedirs('Output')
+        self.canvas._output_folder = 'Output'
+        self.canvas.save()
+
+    def is_enabled_on_save_image(self):
+        # Reusing the same logic.
+        return self.is_enabled_on_stop_image_acquisition()
+
+    def action_on_debayer(self):
+        self.canvas.toggle_debayering()
+
+    def is_enabled_on_debayer(self):
+        # TODO: Check if format is BayerRG.
+        enable = False
+        if self.cti_files:
+            if self.ia:
+                enable = True
+        return enable
+
+    def action_on_show_triangulation_pane(self):
+        if self._widget_triangulation_pane is None: 
+            self._widget_triangulation_pane = QPushButton("Test")
+        if self._widget_hlayout.count() < 2:
+            self._widget_hlayout.addWidget(self._widget_triangulation_pane)
+            self._widget_triangulation_pane.show()
+        else:
+            self._widget_hlayout.removeWidget(self._widget_triangulation_pane)
+            self._widget_triangulation_pane.hide()
+            # self._widget_hlayout.removeItem(1)
+        # pass
+
+    def is_enabled_on_show_triangulation_pane(self):
+        # TODO: fix this. 
+        return True
 
     def action_on_show_attribute_controller(self):
         if self.ia and self.attribute_controller.isHidden():
@@ -739,6 +860,26 @@ class ActionStopImageAcquisition(Action):
         super().__init__(
             icon=icon, title=title, parent=parent, action=action, is_enabled=is_enabled
         )
+
+class ActionSaveImage(Action):
+    def __init__(
+            self, icon=None, title=None, parent=None, action=None, is_enabled=None
+    ):
+        #
+        super().__init__(
+            icon=icon, title=title, parent=parent, action=action, is_enabled=is_enabled
+        )
+
+class ActionDebayer(Action):
+    def __init__(
+            self, icon=None, title=None, parent=None, checkable=True, action=None, is_enabled=None
+    ):
+        #
+        super().__init__(
+            icon=icon, title=title, parent=parent, action=action, checkable=checkable, is_enabled=is_enabled
+        )
+
+
 
 
 class ActionShowAttributeController(Action):
