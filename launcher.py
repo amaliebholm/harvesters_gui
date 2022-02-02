@@ -19,6 +19,7 @@
 
 
 import sys
+import torch
 from PyQt5.QtWidgets import QApplication
 from harvesters_gui.frontend.pyqt5 import Harvester
 
@@ -26,5 +27,6 @@ from harvesters_gui.frontend.pyqt5 import Harvester
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     h = Harvester()
+    #h.add_cti_files('/Users/eier/GitHub/harvesters_gui/Pixelink GenTL Producer/TLpixelink32/TLpixelink32.cti')
     h.show()
     sys.exit(app.exec_())
